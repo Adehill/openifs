@@ -398,7 +398,7 @@ def run_openifs_test(openifs_version, image_name,
     # Build docker run command
     rm_flag = "--rm" if remove_container else ""    
     cmd = [
-        "docker", "run", 
+        "docker", "run", "-it",
         *([rm_flag] if rm_flag else []),  # Add --rm only if specified, 
         image_name,
         "bash", "-lc",

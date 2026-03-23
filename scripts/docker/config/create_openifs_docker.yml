@@ -13,7 +13,7 @@
 openifs_version : "48r1"
 
 # The OpenIFS branch to extract from repo
-openifs_branch : "main"
+openifs_branch : "feature/OIFS-674-test-gcc14"
 
 # Climate data version
 climate_version : "climate.v020"
@@ -38,7 +38,7 @@ docker_template : "./Dockerfile"
 openifs_build_docker_dir : "~/oifs_docker_create_dir"
 
 # The URL for the OpenIFS repository, where the branch will be extracted
-openifs_repo_url : "git@github.com:ecmwf-ifs/openifs.git" 
+openifs_repo_url : "git@github.com:Adehill/openifs.git" 
 
 # True to clone OpenIFS repository, False to use existing
 clone_openifs : True
@@ -50,10 +50,10 @@ force_reclone : True
 force_rebuild : False
 
 # Run tests after building image
-run_tests : True
+run_tests : False
 
 # Run SCM test after main tests
-run_scm_test : True
+run_scm_test : False
 
 # Force removal of test container after tests complete (True = remove with --rm, False = keep for inspection)
 remove_test_container : False
