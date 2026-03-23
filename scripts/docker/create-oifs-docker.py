@@ -344,14 +344,17 @@ def update_oifs_home(oifs_config_path, openifs_version):
     logger.error(f"OIFS_HOME export line not found in {oifs_config_path}")
     return False
 
-def build_docker_image(dockerfile_path, image_name, build_dir):
+def build_docker_image(dockerfile_path, image_name, build_dir, no_cache=False):
     """
     Builds a Docker image from the specified Dockerfile directory.
     By default, this is a clean build (includes no-cache), which is slower but safer
     """
     logger = logging.getLogger(__name__)
-    
-    cmd = ["docker", "build", "--no-cache", "-t", image_name, "-f", dockerfile_path, "."]
+
+    cmd = ["docker", "build"]
+    if no_cache:
+        cmd.append("--no-cache")
+    cmd += ["-t", image_name, "-f", dockerfile_path, "."]
 
     logger.info(f"Executing image build using: {' '.join(cmd)}")
 
@@ -376,48 +379,64 @@ def run_openifs_test(openifs_version, image_name,
     """
     logger = logging.getLogger(__name__)
 
-    logger.info(f"Running openifs-test to create, build and test suite in container {image_name}...")
-    logger.info("This may take 10-30 minutes depending on your system")
+    container_name = f"oifs-{openifs_version}"
 
-    # Build test command
+    # Remove any existing container with the same name
+    check_result = subprocess.run(
+        ["docker", "inspect", "--format", "{{.Name}}", container_name],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    if check_result.returncode == 0:
+        logger.warning(f"Container '{container_name}' already exists and will be removed")
+        subprocess.run(["docker", "rm", "-f", container_name], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logger.info(f"Existing container '{container_name}' removed successfully")
+    
+    # Start container with /bin/bash as main process
+    logger.info(f"Starting container '{container_name}' from image {image_name}...")
+    run_cmd = [
+        "docker", "run", "-dit",
+        "--name", container_name,
+        image_name,
+        "/bin/bash"
+    ]
+    subprocess.run(run_cmd, check=True)
+    logger.info(f"Container '{container_name}' started. Re-enter later with:")
+    logger.info(f"  docker start {container_name} && docker exec -it {container_name} /bin/bash")
+
+    # Build test command (unchanged)
     test_cmd = (
         f"source ~/{openifs_version}/oifs-config.edit_me.sh && "
-        f"$OIFS_TEST/openifs-test.sh -cb -j 8''"
+        f"$OIFS_TEST/openifs-test.sh -cb -j 8"
     )
-    
-    # Add OpenIFS tests to command if requested
-    if run_tests :
-        logger.info("OpenIFS test will be run after build success")
+    if run_tests:
         test_cmd += " && $OIFS_TEST/openifs-test.sh -t"
-
-    # Add SCM test if requested
     if run_scm_test:
-        logger.info("SCM test will also be run after main tests")
         test_cmd += " && cd $OIFS_HOME && $SCM_TEST/callscm"
-    
-    # Build docker run command
-    rm_flag = "--rm" if remove_container else ""    
-    cmd = [
-        "docker", "run", "-it",
-        *([rm_flag] if rm_flag else []),  # Add --rm only if specified, 
-        image_name,
+
+    # Execute test command inside the running container via exec
+    exec_cmd = [
+        "docker", "exec", "-it",
+        container_name,
         "bash", "-lc",
         test_cmd
     ]
 
-    logger.info(f"Running: {' '.join(cmd)}\n")
-        
+    logger.info(f"Running tests via exec: {' '.join(exec_cmd)}\n")
+
     try:
-        result = subprocess.run(cmd)
+        subprocess.run(exec_cmd, check=True)
         logger.info("OpenIFS built successfully")
         if run_tests:
             logger.info("OpenIFS tests passed successfully")
         if run_scm_test:
             logger.info("SCM test also passed successfully")
-        if not remove_container:
-            logger.info("Container was not removed. Use 'docker ps -a' to see it.")
-        else : 
-            logger.info("Container was removed")
+        if remove_container:
+            subprocess.run(["docker", "rm", "-f", container_name], check=True)
+            logger.info(f"Container '{container_name}' removed")
+        else:
+            logger.info(f"Container '{container_name}' left running. Use 'docker ps' to see it.")
+            logger.info(f"Container can be restarted using 'docker exec -it {container_name} /bin/bash'")
         return True
     except subprocess.CalledProcessError as e:
         logger.error(f"OpenIFS tests failed: {e}")
@@ -427,7 +446,6 @@ def run_openifs_test(openifs_version, image_name,
             logger.info("Container was not removed. Use 'docker ps -a' to inspect it.")
         return False
 
-    
 def main():
     
     script_start_time = time.time()
@@ -529,28 +547,17 @@ def main():
     # Docker Image Build
     oifs_image_name = f"openifs-{config['openifs_version']}-gcc{config['base_docker_image']}:{config['openifs_branch']}"
     
-    image_exists = check_docker_image_exists(oifs_image_name)
     force_rebuild = config.get('force_rebuild', False)
-    
-    should_build = False
-    
-    if not image_exists:
-        logger.info(f"Docker image {oifs_image_name} does not exist - will build")
-        should_build = True
-    elif force_rebuild:
-        logger.info(f"Docker image {oifs_image_name} exists but force_rebuild=True - will rebuild")
-        should_build = True
-    else:
-        logger.info(f"Docker image {oifs_image_name} already exists - skipping build")
-        logger.info("Set 'force_rebuild: True' in config to force rebuild")
-    
-    if should_build:
-        with timer("Docker Image Build", timings, 'image_build'):
-            logger.info(f"Building Docker image {oifs_image_name}...")
-            build_docker_image(dockerfile_path, oifs_image_name, config['openifs_build_docker_dir'])
-            logger.info(f"Docker image {oifs_image_name} built successfully!")
-    else:
-        timings['image_build'] = 0
+
+    with timer("Docker Image Build", timings, 'image_build'):
+        logger.info(f"Building Docker image {oifs_image_name}...")
+        if force_rebuild:
+            logger.info("force_rebuild=True: building without cache")
+        else:
+            logger.info("force_rebuild=False: building with cache")
+        logger.info(f"Building Docker image {oifs_image_name}...")
+        build_docker_image(dockerfile_path, oifs_image_name, config['openifs_build_docker_dir'], no_cache=force_rebuild)
+        logger.info(f"Docker image {oifs_image_name} built successfully!")
     
     # OpenIFS Build and Test
     run_build = config.get('run_build', True)
@@ -570,11 +577,7 @@ def main():
             if test_success:
                 logger.info("All tests passed successfully")
             else:
-                logger.error("Tests failed")
-                if not should_build:
-                    logger.error("Tests failed on existing image - consider setting 'force_rebuild: True'")
-                else:
-                    logger.error("Tests failed on newly built image - check build configuration")
+                logger.error("Tests failed - check build configuration")
     else:
         logger.info("Skipping build and tests (run_build: False in config)")
         timings['build_and_test'] = 0
@@ -587,7 +590,7 @@ def main():
     logger.info("=" * 70)
     logger.info("Configuration:")
     logger.info(f"  Image: {oifs_image_name}")
-    logger.info(f"  Built: {'Yes' if should_build else 'No (already exists)'}")
+    logger.info(f"  Built: {'Yes' if force_rebuild else 'No (already exists)'}")
     logger.info(f"  OpenIFS Build: {'Passed' if run_build and test_success else 'Failed' if run_build else 'Skipped'}")
     logger.info(f"  OpenIFS Tests: {'Passed' if run_tests and test_success else 'Failed' if run_tests else 'Skipped'}")
     logger.info(f"  SCM Tests: {'Passed' if run_scm_test and test_success else 'Failed' if run_scm_test else 'Skipped'}")
@@ -596,10 +599,8 @@ def main():
     logger.info(f"  Image Validation:     {format_duration(timings['image_validation'])}")
     logger.info(f"  Dockerfile Prep:      {format_duration(timings['dockerfile_prep'])}")
     logger.info(f"  Repository Setup:     {format_duration(timings['repo_setup'])}")
-    if should_build:
-        logger.info(f"  Image Build:          {format_duration(timings['image_build'])}")
-    else:
-        logger.info(f"  Image Build:          Skipped")
+    logger.info(f"  Image Build:          {format_duration(timings['image_build'])}")
+
     if run_build:
         logger.info(f"  Build & Test:         {format_duration(timings['build_and_test'])}")
     else:

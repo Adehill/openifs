@@ -13,7 +13,7 @@
 openifs_version : "48r1"
 
 # The OpenIFS branch to extract from repo
-openifs_branch : "feature/OIFS-674-test-gcc14"
+openifs_branch : "OIFS-674-test-gcc14"
 
 # Climate data version
 climate_version : "climate.v020"
@@ -29,7 +29,7 @@ openifs_expt_url : "https://sites.ecmwf.int/openifs/openifs-download/experiments
 
 # Docker image - the following images are known to work.
 #base_docker_image : "12.3.0-bullseye"
-base_docker_image : "13"
+base_docker_image : "14"
 
 # Path for the Docker file template
 docker_template : "./Dockerfile"
@@ -47,7 +47,7 @@ clone_openifs : True
 force_reclone : True
 
 # Force rebuild of Docker image even if it exists
-force_rebuild : False
+force_rebuild : True
 
 # Run tests after building image
 run_tests : False
