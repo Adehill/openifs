@@ -30,7 +30,7 @@ projects :
 
     - ecbuild :
         git     : https://github.com/ecmwf/ecbuild
-        version : 3.7.0
+        version : 3.7.2
         bundle  : false
 
     - eccodes :
@@ -67,7 +67,7 @@ projects :
 
     - metkit :
         git     : https://github.com/ecmwf/metkit
-        version : 1.8.10
+        version : 1.9.0
         require : eckit
 
     - fdb5 :
