@@ -307,7 +307,34 @@ fi
 
 # data directory for resolution dependent files:
 TARGET="${OIFS_RES}${OIFS_GRID}"
-if [ ! -L ${TARGET} ]; then
+LAQUA=true
+LFORCE=false
+if ${LAQUA}; then
+   echo "LAQUA=T, Aquaplanet run"
+   if [ -L "${TARGET}" ]; then
+      echo "removing existing symlink: ${TARGET}"
+      rm -f "${TARGET}"
+   fi
+   if [ ! -d "${TARGET}" ]; then
+      echo "copying: ${OIFS_DATA_DIR}/${OIFS_CLIMATE}/${TARGET} to ${TARGET}"
+      cp -r "${OIFS_DATA_DIR}/${OIFS_CLIMATE}/${TARGET}" "${TARGET}"
+   else
+      echo "using existing directory: ${TARGET}"
+   fi
+   # set orography to 0.0 
+   echo "LAQUA=T, move lsm,lsmoro and sporog to lsm_orig,lsmoro_orig and sporog_orig before zero"
+   mv "${TARGET}"/lsmoro "${TARGET}"/lsmoro_orig
+   mv "${TARGET}"/sporog "${TARGET}"/sporog_orig
+   mv "${TARGET}"/lsm "${TARGET}"/lsm_orig
+   echo "LAQUA=T, zero orography and land-sea mask in lsm,lsmoro and sporog"
+   grib_set -d 0.0 "${TARGET}"/lsmoro_orig "${TARGET}"/lsmoro
+   grib_set -d 0.0 "${TARGET}"/sporog_orig "${TARGET}"/sporog
+   grib_set -d 0.0 "${TARGET}"/lsm_orig "${TARGET}"/lsm
+
+
+
+
+elif [ ! -L "${TARGET}" ]; then
    echo "creating symlink: ${TARGET}"
    ln -s "${OIFS_DATA_DIR}/${OIFS_CLIMATE}/${TARGET}" ${TARGET}
 elif ${LFORCE} && [ -L ${TARGET} ]; then
