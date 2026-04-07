@@ -80,7 +80,8 @@ USE YOMCST             , ONLY : RTT
 USE YOMXFU             , ONLY : TXFU
 USE PARKIND1           , ONLY : JPIM, JPRB
 USE YOMHOOK            , ONLY : LHOOK, DR_HOOK, JPHOOK
-USE YOMCT0             , ONLY : NCONF, LFBDAP, LELAM, LIFSMIN, LECMWF
+USE YOMCT0             , ONLY : NCONF, LFBDAP, LELAM, LIFSMIN, LECMWF, N3DINI
+USE YOMDYNCORE         , ONLY : LAQUA
 USE YOMLUN             , ONLY : NULOUT
 USE TRAJECTORY_MOD     , ONLY : LTRAJHR
 !USE SPECTRAL_FIELDS_MOD, ONLY: SPECTRAL_FIELD, ASSIGNMENT(=)
@@ -124,6 +125,7 @@ REAL(KIND=JPHOOK) :: ZHOOK_HANDLE
 #include "sugrxfu.intfb.h"
 #include "suspec.intfb.h"
 #include "spnorm.intfb.h"
+#include "suorog.intfb.h"
 
 !     ------------------------------------------------------------------
 
@@ -170,6 +172,32 @@ CALL FLUSH(NULOUT)
 CALL MPL_BARRIER(CDSTRING='SUINIF1')
 
 !     ------------------------------------------------------------------
+
+!*       1.5   RESET SPECTRAL FIELDS FOR AQUAPLANET
+!              -------------------------------------
+! When N3DINI=0, spectral fields are read from real initial conditions
+! and ln(ps) and spectral orography carry the imprint of real-world
+! mountains and land-sea pressure distribution.  Override both.
+IF (LAQUA .AND. N3DINI == 0) THEN
+
+  ! Set surface pressure to a uniform 1013.25 hPa everywhere.
+  ! Only the global-mean (wavenumber zero) coefficient is non-zero.
+  YDSP%SP(:) = 0.0_JPRB
+  IF (YDDIM%NUMP > 0 .AND. YDGEOMETRY%YRLAP%MYMS(1) == 0) THEN
+    YDSP%SP(YDGEOMETRY%YRLAP%NASM0(0)) = LOG(101325.0_JPRB)
+  ENDIF
+
+  ! Set orography to zero everywhere and update the gridpoint orography
+  ! arrays used by the dynamics.  Only done if orography was initialised
+  ! from the input file (LDINOR=.TRUE.).
+  ! LLINOR is used as the gate (not SIZE) because SUOROG contains MPI
+  ! collective calls that must be reached by all tasks simultaneously.
+  IF (LLINOR) THEN
+    YDSP%OROG(:) = 0.0_JPRB
+    CALL SUOROG(YDGEOMETRY, YDSP%OROG)
+  ENDIF
+
+ENDIF
 
 !*       2.    INITIALIZE GRID POINT FIELDS
 !              ----------------------------
