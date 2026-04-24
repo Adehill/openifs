@@ -13,7 +13,7 @@
 openifs_version : "48r1"
 
 # The OpenIFS branch to extract from repo
-openifs_branch : "OIFS-674-test-gcc14"
+openifs_branch : "main"
 
 # Climate data version
 climate_version : "climate.v020"
@@ -50,10 +50,10 @@ force_reclone : True
 force_rebuild : True
 
 # Run tests after building image
-run_tests : False
+run_tests : True
 
 # Run SCM test after main tests
-run_scm_test : False
+run_scm_test : True
 
 # Force removal of test container after tests complete (True = remove with --rm, False = keep for inspection)
 remove_test_container : False
