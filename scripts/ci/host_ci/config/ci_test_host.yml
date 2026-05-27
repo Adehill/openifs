@@ -10,6 +10,8 @@
 #
 
 # CI config for ci-oifs-host.py.
+# Optional compatibility guard for the shared host_ci_lib profile loader.
+execution_profile : "host"
 #
 # Stages two OpenIFS source trees (control branch + test branch), runs
 # `openifs-test.sh -cbt` with IFS_TEST_BITIDENTICAL=init IFS_TEST_LEGACY=1

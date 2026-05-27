@@ -1,0 +1,69 @@
+#
+# (C) Copyright 2011- ECMWF.
+#
+# This software is licensed under the terms of the Apache Licence Version 2.0
+# which can be obtained at http://www.apache.org/licenses/LICENSE-2.0.
+#
+# In applying this licence, ECMWF does not waive the privileges and immunities
+# granted to it by virtue of its status as an intergovernmental organisation
+# nor does it submit to any jurisdiction.
+#
+
+# CI config for ci-oifs-ecmwf-hpc.py.
+# Optional compatibility guard for the shared host_ci_lib profile loader.
+execution_profile : "ecmwf_hpc"
+#
+# Stages two OpenIFS source trees (control branch + test branch), runs
+# `openifs-test.sh -cb --arch=./arch/ecmwf/hpc2020/<compiler>` followed by
+# `openifs-test.sh -t` with IFS_TEST_BITIDENTICAL=init IFS_TEST_LEGACY=1
+# in each, and diffs the SAVED_NORMS trees with openifs_branch_bitcompare.py.
+# Everything runs directly on ECMWF HPC — no Docker and no virtual environment.
+
+# OpenIFS version.
+openifs_version : "48r1"
+
+# OpenIFS repository.
+openifs_repo_url : "https://github.com/ecmwf-ifs/openifs.git"
+
+# Branches to compare. The control is the reference; the test is whatever
+# you are evaluating against it. control_branch is always a remote branch
+# name. test_branch accepts either a local checkout path or a remote branch.
+control_branch : "openifs-lts/CY48R1.1"
+test_branch    : ""
+
+# ECMWF-HPC compiler family. Supported values: gnu or intel.
+# This selects the compiler family used in cache naming and reporting.
+compiler : "intel"
+
+# Concrete arch path written into the staged oifs-config.edit_me.sh.
+# This must point to a real leaf under arch/ecmwf/hpc2020. For gnu,
+# ./arch/ecmwf/hpc2020/gnu/default is usually sufficient. For intel,
+# you must choose a concrete compiler/MPI leaf because there is no
+# default leaf at ./arch/ecmwf/hpc2020/intel.
+arch_path : "./arch/ecmwf/hpc2020/intel/2021.4.0/intel-mpi/2021.4.0"
+
+# Host-side build/work directory. Pick a path OUTSIDE your OpenIFS source
+# checkout so a local-source copy does not recurse into itself.
+openifs_build_host_dir : "~/oifs_ecmwf_hpc_ci_dir"
+
+# Where bit-comparison reports are written.
+ci_reports : "~/oifs_ecmwf_hpc_ci_dir/ci_reports"
+
+# Where cached control SAVED_NORMS tarballs are stored. Filename:
+# control_saved_norms_<openifs_version>_<compiler>.tgz
+control_saved_norms_dir : "~/oifs_ecmwf_hpc_ci_dir/control_saved_norms"
+
+# Whether to clone the control branch from the remote (True), or use an
+# existing pre-populated source tree at
+#   <openifs_build_host_dir>/build_dir_control/<openifs_version>/
+clone_openifs_control : True
+
+# Force removal of an existing per-branch clone directory without prompting.
+force_reclone : True
+
+# Reuse the control SAVED_NORMS tarball from a previous run if it already
+# exists for this OpenIFS version and compiler family.
+reuse_control_if_present : True
+
+# Extra flags forwarded to openifs-test.sh during the -cb stage.
+openifs_test_extra_flags : "--cmake=BUILD_ifsbench=OFF --clean"

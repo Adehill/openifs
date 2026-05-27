@@ -9,13 +9,13 @@
 # granted to it by virtue of its status as an intergovernmental organisation
 # nor does it submit to any jurisdiction.
 #
-"""Host-based CI entrypoint for OpenIFS."""
+"""ECMWF-HPC CI entrypoint for OpenIFS."""
 
 from host_ci_lib import run_profile
 
 
 def main():
-    run_profile("host")
+    run_profile("ecmwf_hpc")
 
 
 if __name__ == "__main__":
