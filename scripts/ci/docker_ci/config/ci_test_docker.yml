@@ -10,6 +10,10 @@
 #
 
 # CI config for ci-oifs-docker.py.
+
+# Safety guard: when False, Docker CI aborts on detected ECMWF-HPC systems
+# and also aborts if no docker executable is available.
+allow_unsupported_environment : False
 #
 # Builds two Docker images (control branch + test branch), runs
 # `openifs-test.sh -cbt` with IFS_TEST_BITIDENTICAL=init IFS_TEST_LEGACY=1

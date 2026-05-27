@@ -100,6 +100,39 @@ STATUS_NOT_RUN = "SKIPPED - Not run"
 STATUS_REUSED_NORMS = "SKIPPED - Reused cached NORMS"
 
 
+def detect_runtime_environment():
+    has_slurm = all(shutil.which(cmd) for cmd in ("srun", "salloc"))
+    has_modules = bool(
+        os.environ.get("LMOD_CMD") or
+        os.environ.get("MODULESHOME") or
+        shutil.which("modulecmd")
+    )
+    if has_slurm and has_modules:
+        return 'ecmwf_hpc'
+    if shutil.which("docker"):
+        return 'docker_host'
+    return 'standard_host'
+
+
+def enforce_runtime_environment(config):
+    if config.get('allow_unsupported_environment', False):
+        return
+
+    detected = detect_runtime_environment()
+    if detected == 'ecmwf_hpc':
+        raise EnvironmentError(
+            "Docker CI is blocked on detected ECMWF-HPC systems. "
+            "Use the ECMWF-HPC host CI driver instead, or set "
+            "allow_unsupported_environment: True to bypass this guard."
+        )
+    if not shutil.which("docker"):
+        raise EnvironmentError(
+            "Docker CI requires a Docker-capable host, but no 'docker' executable "
+            "was found on PATH. Set allow_unsupported_environment: True only if you "
+            "intentionally want to bypass this guard."
+        )
+
+
 def _fresh_stage_statuses():
     return {"build": STATUS_NOT_RUN, "test": STATUS_NOT_RUN}
 
@@ -530,6 +563,7 @@ def main():
     find_py_packages.main(["yaml"])
 
     config = read_yml_config.main(cli_args.config)
+    enforce_runtime_environment(config)
 
     build_dir = config['openifs_build_docker_dir']
     os.makedirs(build_dir, exist_ok=True)

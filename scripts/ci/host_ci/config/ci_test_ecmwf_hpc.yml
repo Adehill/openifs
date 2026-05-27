@@ -12,6 +12,10 @@
 # CI config for ci-oifs-ecmwf-hpc.py.
 # Optional compatibility guard for the shared host_ci_lib profile loader.
 execution_profile : "ecmwf_hpc"
+
+# Safety guard: when False, this config aborts unless the runtime looks like
+# ECMWF-HPC (Slurm tools + module system available).
+allow_unsupported_environment : False
 #
 # Stages two OpenIFS source trees (control branch + test branch), runs
 # `openifs-test.sh -cb --arch=./arch/ecmwf/hpc2020/<compiler>` followed by

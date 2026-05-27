@@ -78,8 +78,40 @@ def _host_log_suffix(config):
     return f"gcc{config['compiler_version']}"
 
 
+def _host_summary_label(_config):
+    return "host"
+
+
 def _host_prepare_source(staged_src, _config):
     shared_helpers.patch_oifs_home(staged_src)
+
+
+def _detect_runtime_environment():
+    has_slurm = all(shutil.which(cmd) for cmd in ("srun", "salloc"))
+    has_modules = bool(
+        os.environ.get("LMOD_CMD") or
+        os.environ.get("MODULESHOME") or
+        shutil.which("modulecmd")
+    )
+    if has_slurm and has_modules:
+        return "ecmwf_hpc"
+    if shutil.which("docker"):
+        return "docker_host"
+    return "standard_host"
+
+
+def _enforce_runtime_environment(config, profile_name):
+    if config.get("allow_unsupported_environment", False):
+        return
+
+    detected = _detect_runtime_environment()
+    if profile_name == "ecmwf_hpc" and detected != "ecmwf_hpc":
+        raise EnvironmentError(
+            "The ECMWF-HPC CI profile can only run on an ECMWF-HPC system. "
+            f"Detected environment: {detected}. "
+            "Set allow_unsupported_environment: True only if you intentionally "
+            "want to bypass this guard."
+        )
 
 
 def _compiler_value(config):
@@ -169,6 +201,10 @@ def _hpc_log_suffix(config):
     return _compiler_value(config)
 
 
+def _hpc_summary_label(_config):
+    return "ecmwf-hpc"
+
+
 PROFILES = {
     "host": {
         "name": "host",
@@ -184,6 +220,7 @@ PROFILES = {
         "build_commands": ci_lib.build_test_commands,
         "prepare_source": _host_prepare_source,
         "log_suffix": _host_log_suffix,
+        "summary_label": _host_summary_label,
     },
     "ecmwf_hpc": {
         "name": "ecmwf_hpc",
@@ -200,6 +237,7 @@ PROFILES = {
         "prepare_source": _hpc_prepare_source,
         "log_lines": _hpc_log_lines,
         "log_suffix": _hpc_log_suffix,
+        "summary_label": _hpc_summary_label,
     },
 }
 
@@ -380,6 +418,7 @@ def run_profile(profile_name):
 
     config = read_yml_config.main(cli_args.config)
     _validate_profile_config(config, profile_name)
+    _enforce_runtime_environment(config, profile_name)
 
     build_dir = os.path.expanduser(os.path.expandvars(config["openifs_build_host_dir"]))
     os.makedirs(build_dir, exist_ok=True)
@@ -429,6 +468,8 @@ def run_profile(profile_name):
     if test_phase_failed:
         ci_lib.write_synthetic_report(
             report_path,
+            f"Execution profile: {profile['summary_label'](config)}\n"
+            f"CI banner: {profile['banner']}\n\n"
             "Test phase FAILED during configure+build or ctest. "
             "See the uploaded BUILD OUTPUT and CTEST OUTPUT artifacts for the cause.",
         )
@@ -439,6 +480,8 @@ def run_profile(profile_name):
         logger.warning("Skipping bit-comparison — control phase did not produce SAVED_NORMS")
         ci_lib.write_synthetic_report(
             report_path,
+            f"Execution profile: {profile['summary_label'](config)}\n"
+            f"CI banner: {profile['banner']}\n\n"
             "Control phase FAILED — no SAVED_NORMS to compare against. "
             "Test phase ran to completion; see uploaded artifacts for details.",
         )
@@ -446,7 +489,11 @@ def run_profile(profile_name):
         bit_compare_skip_reason = "No control NORMS"
         timings["norms_compare"] = 0
     else:
-        with shared_helpers.timer("NORMS comparison (host)", timings, "norms_compare"):
+        with shared_helpers.timer(
+            f"NORMS comparison ({profile['summary_label'](config)})",
+            timings,
+            "norms_compare",
+        ):
             passed = compare_norms(test_root, control_tarball, report_path, build_dir)
         bit_compare_status = "PASS" if passed else "FAIL"
         bit_compare_skip_reason = None
@@ -479,6 +526,15 @@ def run_profile(profile_name):
         total=total,
         timing_keys=("control-branch", "test-branch", "norms_compare"),
     )
+
+    summary_lines = [
+        summary_lines[0],
+        summary_lines[1],
+        summary_lines[2],
+        f"  execution profile     : {profile['summary_label'](config)}",
+        f"  CI banner             : {profile['banner']}",
+        *summary_lines[3:],
+    ]
 
     for line in summary_lines:
         logger.info(line)
