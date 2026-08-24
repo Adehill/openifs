@@ -43,9 +43,7 @@ include(arpifs_fc_include)
 
 list(APPEND arpifs_public_libs fc_only_intfb)
 
-# Some #include dependencies need to be satisfied,
-# even though the actual satrad routine is replaced with a dummy.
-list(APPEND arpifs_private_includes satrad/interface openifs/emos)
+list(APPEND arpifs_private_includes openifs/emos)
 
 
 include(arpifs_oifs_include)
@@ -80,7 +78,6 @@ ecbuild_add_library(
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mse/interface>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mse/externals>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/biper/interface>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mpa/conv/interface>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mpa/micro/interface>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mpa/turb/interface>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/mpa/chem/interface>
@@ -89,8 +86,6 @@ ecbuild_add_library(
     arpifs/namelist
     arpifs/ald_inc/namelist
     arpifs/ald_inc/function
-    arpifs/var
-    blacklist/include
     ${arpifs_private_includes}
 
   PUBLIC_LIBS arpifs_intfb surf.${PREC} trans.${PREC}
