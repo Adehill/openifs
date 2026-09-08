@@ -105,4 +105,4 @@ reuse_control_if_present : True
 
 # Extra flags forwarded to openifs-test.sh -cbt inside the container.
 ## gcc 14, single precision fails for a strange problem in susrtab.F90
-openifs_test_extra_flags : "--without-single-precision --cmake=BUILD_ifsbench=OFF --clean"
+openifs_test_extra_flags : "--without-double-precision --cmake=BUILD_ifsbench=OFF --clean"

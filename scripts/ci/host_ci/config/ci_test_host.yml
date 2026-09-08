@@ -69,4 +69,4 @@ force_reclone : True
 reuse_control_if_present : True
 
 # Extra flags forwarded to openifs-test.sh -cbt.
-openifs_test_extra_flags : "--without-single-precision --cmake=BUILD_ifsbench=OFF --clean"
+openifs_test_extra_flags : "--without-double-precision --cmake=BUILD_ifsbench=OFF --clean"
