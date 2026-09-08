@@ -449,6 +449,9 @@ elseif(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
     scmec/source/cnt1c.F90
     PROPERTIES COMPILE_FLAGS "-fno-openmp")
 
+  set_source_files_properties(radiation/module/radiation_aerosol_optics.F90
+    PROPERTIES COMPILE_FLAGS "-O1 -fno-tree-vectorize")
+
   # -O1 flag to prevent runtime hang
   # -fno-openmp for Docker issues (see below)
   set_source_files_properties(arpifs/control/cnt0.F90
