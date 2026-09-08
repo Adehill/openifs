@@ -113,7 +113,7 @@ jobs:
         control_saved_norms_dir        : "${NORMS_DIR}"
         force_reclone                  : True
         reuse_control_if_present       : True
-        openifs_test_extra_flags       : "--without-single-precision --cmake=BUILD_ifsbench=OFF --clean"
+        openifs_test_extra_flags       : "--without-double-precision --cmake=BUILD_ifsbench=OFF --clean"
         EOF
 
     - name: Build & Test
