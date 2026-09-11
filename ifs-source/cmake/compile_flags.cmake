@@ -452,6 +452,9 @@ elseif(CMAKE_Fortran_COMPILER_ID MATCHES "GNU")
   set_source_files_properties(radiation/module/radiation_aerosol_optics.F90
     PROPERTIES COMPILE_FLAGS "-O1 -fno-tree-vectorize -finline-matmul-limit=1000")
 
+  set_source_files_properties(arpifs/phys_radi/susrtab.F90
+    PROPERTIES COMPILE_FLAGS "-fno-tree-vectorize")
+
   # -O1 flag to prevent runtime hang
   # -fno-openmp for Docker issues (see below)
   set_source_files_properties(arpifs/control/cnt0.F90
