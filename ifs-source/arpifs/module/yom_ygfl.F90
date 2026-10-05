@@ -291,10 +291,12 @@ LOGICAL :: LADVNEGFIX   = .FALSE.  ! Activates negative fixer for advection
 LOGICAL :: LTRCMFBC     = .FALSE.  ! Activate Bermejo & Conde mass fixer if true
 LOGICAL :: LTRCMFPR     = .FALSE.  ! Activate Priestley mass fixer if true
 LOGICAL :: LTRCMFMG     = .FALSE.  ! Activate Mac Gregor's mass fixer if true
+LOGICAL :: LTRCMFMG_PS  = .FALSE.  ! Activate Mac Gregor's mass fixer to pressure if true
 LOGICAL :: LTRCMFP      = .FALSE.  ! Activate proportional mass fixer  
 LOGICAL :: LTRCMFA_DIF  = .FALSE.  ! Activate additive mass fixer based on t - t+1 diff 
 LOGICAL :: LTRCMFA_LAP  = .FALSE.  ! Activate additive mass fixer based on horizontal laplace 
 LOGICAL :: LTRCMFA_VER  = .FALSE.  ! Activate additive mass fixer based on vertical laplace
+LOGICAL :: LGPNORM2     = .FALSE.  ! Activate alternatixe GP norm for global fixers
 
 LOGICAL :: LEXTRADF     = .FALSE.  ! Extra diagnostics 
 

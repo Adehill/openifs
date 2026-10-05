@@ -10,8 +10,7 @@
 ! 
 
 MODULE COMPENSATED_SUMMATION_MOD
-USE PARKIND1, ONLY : JPRB
-USE YOMHOOK , ONLY : LHOOK, DR_HOOK, JPHOOK
+!DIR$ NOOPTIMIZE 
 
 !**** COMPENSATED_SUMMATION_MOD
 !     Purpose.
@@ -110,12 +109,15 @@ USE YOMHOOK , ONLY : LHOOK, DR_HOOK, JPHOOK
 
 !     ------------------------------------------------------------------
 
-USE PARKIND1  ,ONLY : JPIM     ,JPRB
+USE PARKIND1 , ONLY : JPIM     ,JPRB     ,JPRD
+USE YOMHOOK  , ONLY : LHOOK, DR_HOOK, JPHOOK
 
 SAVE
 PRIVATE
 PUBLIC COMPENSATED_SUM, &
      & COMPENSATED_SUM_OMP, &
+     & COMPENSATED_SUM_DP, &
+     & COMPENSATED_SUM_OMP_DP, &
      & COMPENSATED_DOT_PRODUCT, &
      & COMPENSATED_DOT_PRODUCT_OMP
 
@@ -123,9 +125,17 @@ INTERFACE COMPENSATED_SUM
   MODULE PROCEDURE COMPENSATED_SUM
 END INTERFACE COMPENSATED_SUM
 
+INTERFACE COMPENSATED_SUM_DP
+  MODULE PROCEDURE COMPENSATED_SUM_DP
+END INTERFACE COMPENSATED_SUM_DP
+
 INTERFACE COMPENSATED_SUM_OMP
   MODULE PROCEDURE COMPENSATED_SUM_OMP
 END INTERFACE COMPENSATED_SUM_OMP
+
+INTERFACE COMPENSATED_SUM_OMP_DP
+  MODULE PROCEDURE COMPENSATED_SUM_OMP_DP
+END INTERFACE COMPENSATED_SUM_OMP_DP
 
 INTERFACE COMPENSATED_DOT_PRODUCT
   MODULE PROCEDURE COMPENSATED_DOT_PRODUCT
@@ -199,6 +209,68 @@ SUBROUTINE COMPENSATED_SUM (P,KN,PCORR,PERR)
 IF (LHOOK) CALL DR_HOOK('COMPENSATED_SUMMATION_MOD:COMPENSATED_SUM',1,ZHOOK_HANDLE)
 END SUBROUTINE COMPENSATED_SUM
 
+SUBROUTINE COMPENSATED_SUM_DP (P,KN,PCORR,PERR)
+  IMPLICIT NONE
+
+  INTEGER(KIND=JPIM), INTENT(IN)    :: KN
+  REAL(KIND=JPRD),    INTENT(INOUT) :: P(KN)
+  REAL(KIND=JPRD),    INTENT(OUT)   :: PCORR, PERR
+
+  REAL(KIND=JPRD) :: ZX,ZZ,ZPSUM
+  INTEGER(KIND=JPIM) :: J
+
+  REAL(KIND=JPHOOK) :: ZHOOK_HANDLE
+  IF (LHOOK) CALL DR_HOOK('COMPENSATED_SUMMATION_MOD:COMPENSATED_SUM_DP',0,ZHOOK_HANDLE)
+  PCORR = 0.0_JPRD
+  PERR  = 0.0_JPRD
+
+  ZPSUM = P(1)
+  DO J=2,KN
+!--- It is vital that these 4 lines are not optimized in any way that
+!--- changes the results.
+    ZX     = P(J) + ZPSUM
+    ZZ     = ZX   - P(J)
+    P(J-1) = (P(J)-(ZX-ZZ)) + (ZPSUM-ZZ)
+    ZPSUM  = ZX
+!--- accumulate the correction and the error
+    PCORR = PCORR + P(J-1)
+    PERR  = PERR  + ABS(P(J-1))
+  ENDDO
+  P(KN) = ZPSUM
+ 
+!-----------------------------------------------------------------
+!  Vectorization
+!  -------------
+!
+!  NB: As coded, the above loop may not run very well on a vector
+!      computer. However, any loop ordering that preserves the exact
+!      sum, and ends up with the floating-point sum in the last
+!      element and rounding errors in the rest of the array,
+!      should be OK. For example:
+!
+!      ILEN=KN
+!      DO
+!        IHALF=ILEN/2
+!      !--- no vector dependency
+!        DO J=1,IHALF
+!--- It is vital that these 4 lines are not optimized in any way that
+!--- changes the results.
+!          ZX     = P(KN-IHALF+J) + P(KN-ILEN+J)
+!          ZZ     = ZX   - P(KN-IHALF+J)
+!          P(KN-ILEN+J)  = (P(KN-IHALF+J)-(ZX-ZZ)) + (P(KN-ILEN+J)-ZZ)
+!          P(KN-IHALF+J) = ZX
+!--- accumulate the correction and the error
+!          PCORR = PCORR + P(KN-ILEN+J)
+!          PERR  = PERR  + ABS(P(KN-ILEN+J))
+!        ENDDO
+!        ILEN=ILEN-IHALF
+!        IF (ILEN<=1) EXIT
+!      ENDDO
+!-----------------------------------------------------------------
+ 
+IF (LHOOK) CALL DR_HOOK('COMPENSATED_SUMMATION_MOD:COMPENSATED_SUM_DP',1,ZHOOK_HANDLE)
+END SUBROUTINE COMPENSATED_SUM_DP
+
 SUBROUTINE COMPENSATED_SUM_OMP (P,KN,PCORR,PERR)
   USE OML_MOD
 
@@ -263,6 +335,71 @@ SUBROUTINE COMPENSATED_SUM_OMP (P,KN,PCORR,PERR)
   DEALLOCATE(ZCORS)
 IF (LHOOK) CALL DR_HOOK('COMPENSATED_SUMMATION_MOD:COMPENSATED_SUM_OMP',1,ZHOOK_HANDLE)
 END SUBROUTINE COMPENSATED_SUM_OMP
+
+SUBROUTINE COMPENSATED_SUM_OMP_DP (P,KN,PCORR,PERR)
+  USE OML_MOD
+
+  IMPLICIT NONE
+
+  INTEGER(KIND=JPIM), INTENT(IN)    :: KN
+  REAL(KIND=JPRD),    INTENT(INOUT) :: P(KN)
+  REAL(KIND=JPRD),    INTENT(OUT)   :: PCORR, PERR
+
+  REAL(KIND=JPRD), ALLOCATABLE :: ZERRS(:),ZCORS(:)
+  REAL(KIND=JPRD) :: ZX,ZZ
+  INTEGER(KIND=JPIM) :: J,JCHUNK,ILEN,INCHUNKS,IMINLEN,ILENCHUNK, &
+                    & INTHREADS,I,ISTART,IEND
+
+!--- IMINLEN is a tunable parameter. It represents the vector length
+!--- below which there is too little work to make it worth spawning threads
+
+  REAL(KIND=JPHOOK) :: ZHOOK_HANDLE
+  IF (LHOOK) CALL DR_HOOK('COMPENSATED_SUMMATION_MOD:COMPENSATED_SUM_OMP_DP',0,ZHOOK_HANDLE)
+  IMINLEN=1000  !-- this value is pure guesswork (Mike Fisher)
+
+  INTHREADS = OML_MAX_THREADS()
+
+  ILENCHUNK = MAX(IMINLEN,(KN+INTHREADS-1)/INTHREADS)
+  INCHUNKS=1+(KN-1)/ILENCHUNK
+
+  ALLOCATE(ZERRS(INCHUNKS))
+  ALLOCATE(ZCORS(INCHUNKS))
+
+!--- First, we split the array into chunks, and apply compensated_sum
+!--- to each chunk independently.
+
+!$OMP PARALLEL DO PRIVATE(ISTART,IEND), SCHEDULE(STATIC), IF(INCHUNKS>1)
+  DO JCHUNK=1,INCHUNKS
+    ISTART = 1+(JCHUNK-1)*ILENCHUNK
+    IEND   = MIN(JCHUNK*ILENCHUNK,KN)
+    CALL COMPENSATED_SUM_DP (P(ISTART:IEND),1+IEND-ISTART, &
+                      & ZCORS(JCHUNK), ZERRS(JCHUNK))
+  ENDDO
+!$OMP END PARALLEL DO
+
+  PCORR = SUM(ZCORS)
+  PERR  = SUM(ZERRS)
+
+!--- The final element of each chunk contains a partial sum. We apply
+!--- compensated summation to the vector of the final elements.
+
+  DO JCHUNK=2,INCHUNKS
+    I = MIN(JCHUNK*ILENCHUNK,KN)
+    ILEN = I - (JCHUNK-1)*ILENCHUNK
+!--- It is vital that these 4 lines are not optimized
+    ZX        = P(I) + P(I-ILEN)
+    ZZ        = ZX   - P(I)
+    P(I-ILEN) = (P(I)-(ZX-ZZ)) + (P(I-ILEN)-ZZ)
+    P(I)      = ZX
+!--- accumulate the result and its error bound
+    PCORR     = PCORR + P(I-ILEN)
+    PERR      = PERR  + ABS(P(I-ILEN))
+  ENDDO
+
+  DEALLOCATE(ZERRS)
+  DEALLOCATE(ZCORS)
+IF (LHOOK) CALL DR_HOOK('COMPENSATED_SUMMATION_MOD:COMPENSATED_SUM_OMP_DP',1,ZHOOK_HANDLE)
+END SUBROUTINE COMPENSATED_SUM_OMP_DP
 
 SUBROUTINE COMPENSATED_DOT_PRODUCT (P1,P2,PW,POUT,KN,PCORR,PERR)
   IMPLICIT NONE

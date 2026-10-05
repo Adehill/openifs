@@ -60,21 +60,27 @@ MODULE ORDER_INDEPENDENT_SUMMATION_MOD
 !     --------------
 !        Original: 2006-20-22
 
+!        2024-05-03 J.Bandeiras TrajSP: adding LL_ABORT_PRECIS to skip aborts
+!          when using SP and 'n is too large to guarantee error bounds'
+
 !     ------------------------------------------------------------------
 
-USE PARKIND1  ,ONLY : JPIM     ,JPRB
+USE PARKIND1  ,ONLY : JPIM, JPRB, JPRD
 USE COMPENSATED_SUMMATION_MOD, ONLY : COMPENSATED_SUM, COMPENSATED_SUM_OMP, &
+                                & COMPENSATED_SUM_DP, COMPENSATED_SUM_OMP_DP, &
                                 & COMPENSATED_DOT_PRODUCT, &
                                 & COMPENSATED_DOT_PRODUCT_OMP
 USE MPL_MODULE, ONLY : MPL_ALLREDUCE, MPL_ALLGATHERV, MPL_MYRANK, MPL_NPROC, &
                      & MPL_MESSAGE, MPL_SEND, MPL_RECV, MPL_WAIT, &
                      & JP_NON_BLOCKING_STANDARD
 USE YOMHOOK   , ONLY : LHOOK,   DR_HOOK, JPHOOK
+USE, INTRINSIC :: IEEE_ARITHMETIC
 
 SAVE
 PRIVATE
 PUBLIC ORDER_INDEP_LOCAL_SUM, &
      & ORDER_INDEP_GLOBAL_SUM, &
+     & ORDER_INDEP_GLOBAL_SUM_DP, &
      & ORDER_INDEP_GLOBAL_SUM2, &
      & ORDER_INDEP_ALLREDUCE, &
      & ORDER_INDEP_DOT_PRODUCT
@@ -85,6 +91,10 @@ END INTERFACE
 
 INTERFACE ORDER_INDEP_GLOBAL_SUM
   MODULE PROCEDURE ORDER_INDEP_GLOBAL_SUM
+END INTERFACE
+
+INTERFACE ORDER_INDEP_GLOBAL_SUM_DP
+  MODULE PROCEDURE ORDER_INDEP_GLOBAL_SUM_DP
 END INTERFACE
 
 INTERFACE ORDER_INDEP_GLOBAL_SUM2
@@ -136,7 +146,7 @@ LOGICAL,OPTIONAL,INTENT(IN) :: LD_ABORT_IFNOT_REPROD, LD_OPENMP
 INTEGER(KIND=JPIM) :: IN
 REAL(KIND=JPRB) :: ZCORR,ZERR,ZOLDERR,ZBETA,ZRES
 REAL(KIND=JPRB), ALLOCATABLE :: ZP(:)
-LOGICAL :: LLABORT, LL_OPENMP
+LOGICAL :: LLABORT, LL_OPENMP, LL_ABORT_PRECIS
 REAL(KIND=JPHOOK) :: ZHOOK_HANDLE
 
 INTEGER(KIND=JPIM), SAVE :: INMSG=0
@@ -156,11 +166,17 @@ ELSE
   LL_OPENMP = .FALSE.
 ENDIF
 
+IF(JPRB==JPRD) THEN
+    LL_ABORT_PRECIS=.TRUE.
+ELSE
+    LL_ABORT_PRECIS=.FALSE.
+ENDIF
+
 IN = SIZE(PIN)
 
 IF (REAL(2*IN,JPRB)*EPSILON(ZRES) >= 1.0) THEN
   CALL MPL_MESSAGE (CDMESSAGE='n is too large to guarantee error bounds', &
-                    & CDSTRING='ORDER_INDEP_LOCAL_SUM',LDABORT=.TRUE.)
+                    & CDSTRING='ORDER_INDEP_LOCAL_SUM',LDABORT=LL_ABORT_PRECIS)
 ENDIF
 
 TEST_ARRAY_LENGTH: IF (IN>0) THEN
@@ -306,11 +322,11 @@ INTEGER(KIND=JPIM),OPTIONAL, INTENT(IN) :: KNG
 LOGICAL,           OPTIONAL, INTENT(IN) :: LD_ABORT_IFNOT_REPROD, LD_OPENMP
 
 INTEGER(KIND=JPIM) :: J,IN,ING,INPROC
-REAL(KIND=JPRB) :: ZCORR,ZERR,ZOLDERR,ZBUFFL(3),ZBETA,ZRES
+REAL(KIND=JPRB) :: ZCORR,ZERR,ZOLDERR,ZBUFFL(3),ZBETA,ZRES,ZCHECK
 REAL(KIND=JPRB), ALLOCATABLE :: ZPSUMS(:),ZPERRS(:),ZPCORS(:), &
                               & ZBUFFG(:),ZP(:)
 INTEGER(KIND=JPIM), ALLOCATABLE :: IRECVCOUNTS(:)
-LOGICAL :: LLABORT, LL_OPENMP
+LOGICAL :: LLABORT, LL_OPENMP, LL_ABORT_PRECIS
 REAL(KIND=JPHOOK) :: ZHOOK_HANDLE
 
 INTEGER(KIND=JPIM), SAVE :: INMSG=0
@@ -332,6 +348,12 @@ ELSE
   LL_OPENMP = .TRUE.
 ENDIF
 
+IF(JPRB==JPRD) THEN
+    LL_ABORT_PRECIS=.TRUE.
+ELSE
+    LL_ABORT_PRECIS=.FALSE.
+ENDIF
+
 IN = SIZE(PIN)
 
 !--- global length of vector (needed for error bound calculation)
@@ -351,6 +373,13 @@ ENDIF
 
 IF (REAL(2*ING,JPRB)*EPSILON(ZRES) >= 1.0) THEN
   CALL MPL_MESSAGE (CDMESSAGE='n is too large to guarantee error bounds', &
+                  & CDSTRING='ORDER_INDEP_GLOBAL_SUM',LDABORT=LL_ABORT_PRECIS)
+ENDIF
+
+! Protect against infinite loop with NaN values
+ZCHECK=SUM(PIN)
+IF (IEEE_IS_NAN(ZCHECK)) THEN
+  CALL MPL_MESSAGE (CDMESSAGE='array contents NaN', &
                   & CDSTRING='ORDER_INDEP_GLOBAL_SUM',LDABORT=.TRUE.)
 ENDIF
 
@@ -492,6 +521,258 @@ IF (LHOOK) CALL DR_HOOK ('ORDER_INDEPENDENT_SUMMATION_MOD:ORDER_INDEP_GLOBAL_SUM
 
 END FUNCTION ORDER_INDEP_GLOBAL_SUM
 
+FUNCTION ORDER_INDEP_GLOBAL_SUM_DP (PIN,KNG,LD_ABORT_IFNOT_REPROD, LD_OPENMP)
+
+!-----------------------------------------------------------------
+!
+!  Returns an accurate global sum of the elements of PIN. The
+!  sum is bit-reproducible for any distribution of PIN over
+!  threads and tasks, and is independent of the ordering of the
+!  elements of PIN.
+!
+!  NB: PIN is unmodified on return
+!
+! Arguments:
+! ----------
+!
+! Required:
+!
+!   PIN                  - INTENT(IN) - The array to be summed.
+!
+!
+! Optional:
+!
+!   KNG                  - INTENT(IN) - Global length of array.
+!                 
+!   LD_ABORT_IFNOT_REPROD - INTENT(IN) - Defines behaviour in case
+!                                        a reproducible result cannot
+!                                        be guaranteed.
+!
+!   LD_OPENMP            - INTENT(IN) - Use OpenMP parallelization.
+!              
+!
+! Algorithm:
+! ----------
+!
+!  The algorithm is based on Ogita et al. (2005) SIAM J. Sci. Computing,
+!  Vol.26, No.6, pp1955-1988. This is based in turn on an algorithm
+!  by Knuth (1969, seminumerical algorithms).
+!
+!  This version adds a second layer of parallelism on top of that
+!  provided by COMPENSATED_SUM_OMP. It iterates the compensated 
+!  summation until the result is guaranteed to be within 4*eps
+!  of the true sum. It then rounds the result to the nearest
+!  floating-point number whose last three bits are zero, thereby
+!  guaranteeing an order-independent result.
+!
+!  Author: Mike Fisher ECMWF 2006/02/08
+!
+!-----------------------------------------------------------------
+
+IMPLICIT NONE
+
+REAL(KIND=JPRD) :: ORDER_INDEP_GLOBAL_SUM_DP
+
+REAL(KIND=JPRD),             INTENT(IN) :: PIN(:)
+INTEGER(KIND=JPIM),OPTIONAL, INTENT(IN) :: KNG
+LOGICAL,           OPTIONAL, INTENT(IN) :: LD_ABORT_IFNOT_REPROD, LD_OPENMP
+
+INTEGER(KIND=JPIM) :: J,IN,ING,INPROC
+REAL(KIND=JPRD) :: ZCORR,ZERR,ZOLDERR,ZBUFFL(3),ZBETA,ZRES,ZCHECK
+REAL(KIND=JPRD), ALLOCATABLE :: ZPSUMS(:),ZPERRS(:),ZPCORS(:), &
+                              & ZBUFFG(:),ZP(:)
+INTEGER(KIND=JPIM), ALLOCATABLE :: IRECVCOUNTS(:)
+LOGICAL :: LLABORT, LL_OPENMP, LL_ABORT_PRECIS
+REAL(KIND=JPHOOK) :: ZHOOK_HANDLE
+
+INTEGER(KIND=JPIM), SAVE :: INMSG=0
+
+IF (LHOOK) CALL DR_HOOK ('ORDER_INDEPENDENT_SUMMATION_MOD:ORDER_INDEP_GLOBAL_SUM_DP', &
+                      &  0,ZHOOK_HANDLE)
+
+INPROC = MPL_NPROC()
+
+IF (PRESENT(LD_ABORT_IFNOT_REPROD)) THEN
+  LLABORT = LD_ABORT_IFNOT_REPROD
+ELSE
+  LLABORT = .TRUE.
+ENDIF
+
+IF (PRESENT(LD_OPENMP)) THEN
+  LL_OPENMP = LD_OPENMP
+ELSE
+  LL_OPENMP = .TRUE.
+ENDIF
+
+LL_ABORT_PRECIS=.TRUE.
+
+IN = SIZE(PIN)
+
+!--- global length of vector (needed for error bound calculation)
+
+IF (.NOT.PRESENT(KNG)) THEN
+  ING = IN
+  IF (INPROC>1) THEN
+    CALL MPL_ALLREDUCE (ING,'SUM',CDSTRING='ORDER_INDEP_GLOBAL_SUM_DP')
+  ENDIF
+ELSE
+  ING = KNG
+  IF (KNG<IN) THEN
+    CALL MPL_MESSAGE (CDMESSAGE='Specified KNG < SIZE(PIN)', &
+                    & CDSTRING='ORDER_INDEP_GLOBAL_SUM_DP',LDABORT=.TRUE.)
+  ENDIF
+ENDIF
+
+IF (REAL(2*ING,JPRD)*EPSILON(ZRES) >= 1.0) THEN
+  CALL MPL_MESSAGE (CDMESSAGE='n is too large to guarantee error bounds', &
+                  & CDSTRING='ORDER_INDEP_GLOBAL_SUM_DP',LDABORT=LL_ABORT_PRECIS)
+ENDIF
+
+! Protect against infinite loop with NaN values
+ZCHECK=SUM(PIN)
+IF (IEEE_IS_NAN(ZCHECK)) THEN
+  CALL MPL_MESSAGE (CDMESSAGE='array contents NaN', &
+                  & CDSTRING='ORDER_INDEP_GLOBAL_SUM_DP',LDABORT=.TRUE.)
+ENDIF
+
+ALLOCATE (ZP(MAX(IN,1_JPIM)))
+ALLOCATE (ZBUFFG(INPROC*SIZE(ZBUFFL)))
+ALLOCATE (ZPSUMS(INPROC))
+ALLOCATE (ZPERRS(INPROC))
+ALLOCATE (ZPCORS(INPROC))
+ALLOCATE (IRECVCOUNTS(INPROC))
+
+ZOLDERR = HUGE(ZERR)
+
+!--- Copy the input array. This avoids some tricky indexing, at the
+!--- expense of some inefficency.
+
+IF (IN>0) THEN
+  ZP(:) = PIN(:)
+ELSE
+  ZP(1) = 0.0_JPRD
+ENDIF
+
+K_LOOP: DO
+
+!--- transform local arrays
+
+  IF (IN>0) THEN
+    IF (LL_OPENMP) THEN
+      CALL COMPENSATED_SUM_OMP_DP (ZP,IN,ZCORR,ZERR)
+    ELSE
+      CALL COMPENSATED_SUM_DP (ZP,IN,ZCORR,ZERR)
+    ENDIF
+  ENDIF
+
+!--- gather partial sums and error bounds to all processors
+
+  ZBUFFL(1) = ZP(MAX(IN,1_JPIM))
+
+  IF (IN>0) THEN
+    ZBUFFL(2) = ZERR
+    ZBUFFL(3) = ZCORR
+  ELSE
+    ZBUFFL(2) = 0.0_JPRD
+    ZBUFFL(3) = 0.0_JPRD
+  ENDIF
+
+  IF (INPROC>1) THEN
+!-- could use MPL_ALLGATHER here, if it existed!
+
+    IRECVCOUNTS(:) = SIZE(ZBUFFL)
+
+    CALL MPL_ALLGATHERV (ZBUFFL,ZBUFFG,IRECVCOUNTS, &
+                       & CDSTRING='ORDER_INDEP_GLOBAL_SUM_DP')
+
+    DO J=1,INPROC
+      ZPSUMS(J) = ZBUFFG(1+(J-1)*SIZE(ZBUFFL))
+      ZPERRS(J) = ZBUFFG(2+(J-1)*SIZE(ZBUFFL))
+      ZPCORS(J) = ZBUFFG(3+(J-1)*SIZE(ZBUFFL))
+    ENDDO
+  ELSE
+    ZPSUMS(1) = ZBUFFL(1)
+    ZPERRS(1) = ZBUFFL(2)
+    ZPCORS(1) = ZBUFFL(3)
+  ENDIF
+
+!--- transform partial sums
+
+  CALL COMPENSATED_SUM_DP (ZPSUMS,INPROC,ZCORR,ZERR)
+  ZERR  = ZERR  + SUM(ZPERRS)
+  ZCORR = ZCORR + SUM(ZPCORS)
+
+!--- Calculate final result
+
+  ZRES = ZPSUMS(INPROC) + ZCORR
+
+!--- Calculate error bound. This is corollary 4.7 from Ogita et al. (2005)
+
+  ZBETA = ZERR*(REAL(2*ING,JPRD)*EPSILON(ZRES)) &
+       & /(1.0_JPRD - REAL(2*ING,JPRD)*EPSILON(ZRES))
+
+  ZERR = EPSILON(ZRES)*ABS(ZRES) &
+     & +(ZBETA + ( 2.0_JPRD*EPSILON(ZRES)*EPSILON(ZRES)*ABS(ZRES) &
+     &            +3.0_JPRD*TINY(ZRES)))
+
+!--- update the last element of the local array
+
+  ZP(MAX(IN,1_JPIM)) = ZPSUMS(MPL_MYRANK())
+
+!--- exit if the global error is small enough
+
+  IF (ZERR<4.0_JPRD*SPACING(ZRES)) EXIT K_LOOP
+
+!--- Take appropriate action if ZRES cannot be sufficiently refined.
+
+  IF (ZERR >= ZOLDERR) THEN
+    INMSG=INMSG+1
+
+    IF (INMSG<=100) THEN
+      CALL MPL_MESSAGE ( &
+          & CDMESSAGE= 'ORDER_INDEP_GLOBAL_SUM_DP: FALIED TO REFINE SUM', &
+          & CDSTRING='ORDER_INDEP_GLOBAL_SUM_DP')
+      CALL MPL_MESSAGE ( &
+          & CDMESSAGE='WARNING: POSSIBLITY OF NON-REPRODUCIBLE RESULTS',&
+          & CDSTRING='ORDER_INDEP_GLOBAL_SUM_DP')
+    ENDIF
+
+    IF (INMSG==100) THEN
+      CALL MPL_MESSAGE ( &
+          & CDMESSAGE='ORDER_INDEP_GLOBAL_SUM_DP: INMSG>100. OUTPUT SUPPRESSED',&
+          & CDSTRING='ORDER_INDEP_GLOBAL_SUM_DP')
+    ENDIF
+
+    IF (LLABORT) THEN
+      CALL MPL_MESSAGE (CDMESSAGE= &
+                      & 'ABORT BECAUSE LD_ABORT_IFNOT_REPROD WAS SET', &
+                      & CDSTRING='ORDER_INDEP_GLOBAL_SUM_DP',LDABORT=.TRUE.)
+    ENDIF
+  ENDIF
+
+  ZOLDERR = ZERR
+
+ENDDO K_LOOP
+
+!--- At this stage, we have guaranteed that ZRES less than 4*EPS
+!--- away from the exact sum. There are only four floating point
+!--- numbers in this range. So, if we find the nearest number that
+!--- has its last three bits zero, then we have a reproducible result.
+
+ORDER_INDEP_GLOBAL_SUM_DP = ROUND_DP (ZRES)
+
+DEALLOCATE (IRECVCOUNTS)
+DEALLOCATE (ZPCORS)
+DEALLOCATE (ZPERRS)
+DEALLOCATE (ZPSUMS)
+DEALLOCATE (ZBUFFG)
+DEALLOCATE (ZP)
+
+IF (LHOOK) CALL DR_HOOK ('ORDER_INDEPENDENT_SUMMATION_MOD:ORDER_INDEP_GLOBAL_SUM_DP', &
+                      &  1,ZHOOK_HANDLE)
+
+END FUNCTION ORDER_INDEP_GLOBAL_SUM_DP
+
 SUBROUTINE ORDER_INDEP_GLOBAL_SUM2 (PIN,POUT,KNVEC,KDIM,KNL,LD_ABORT_IFNOT_REPROD,LD_OPENMP)
 
 !-----------------------------------------------------------------
@@ -559,7 +840,8 @@ REAL(KIND=JPRB), DIMENSION(KNVEC) :: ZCORR,ZERR,ZOLDERR,ZBETA,ZRES
 REAL(KIND=JPRB), ALLOCATABLE :: ZPSUMS(:,:),ZPERRS(:,:),ZPCORS(:,:), &
                               & ZBUFFL(:),ZBUFFG(:),ZP(:,:)
 INTEGER(KIND=JPIM), ALLOCATABLE :: IRECVCOUNTS(:)
-LOGICAL :: LLABORT, LL_OPENMP, LLDONE(KNVEC)
+LOGICAL :: LLABORT, LL_OPENMP, LLDONE(KNVEC), LL_ABORT_PRECIS
+REAL(KIND=JPRB) :: ZCHECK
 REAL(KIND=JPHOOK) :: ZHOOK_HANDLE
 
 INTEGER(KIND=JPIM), SAVE :: INMSG=0
@@ -586,6 +868,12 @@ ELSE
   LL_OPENMP = .TRUE.
 ENDIF
 
+IF(JPRB==JPRD) THEN
+    LL_ABORT_PRECIS=.TRUE.
+ELSE
+    LL_ABORT_PRECIS=.FALSE.
+ENDIF
+
 !--- global lengths of vectors (needed for error bound calculation)
 
 ING(:) = KNL(:)
@@ -595,6 +883,13 @@ ENDIF
 
 IF (ANY(REAL(2*ING(:),JPRB)*EPSILON(ZRES) >= 1.0)) THEN
   CALL MPL_MESSAGE (CDMESSAGE='n is too large to guarantee error bounds', &
+                  & CDSTRING='ORDER_INDEP_GLOBAL_SUM2',LDABORT=LL_ABORT_PRECIS)
+ENDIF
+
+! Protect against infinite loop with NaN values
+ZCHECK=SUM(PIN)
+IF (IEEE_IS_NAN(ZCHECK)) THEN
+  CALL MPL_MESSAGE (CDMESSAGE='array contents NaN', &
                   & CDSTRING='ORDER_INDEP_GLOBAL_SUM2',LDABORT=.TRUE.)
 ENDIF
 
@@ -997,7 +1292,7 @@ REAL(KIND=JPRB) :: ZCORR,ZERR,ZOLDERR,ZBUFFL(3),ZBETA,ZRES
 REAL(KIND=JPRB), ALLOCATABLE :: ZPSUMS(:),ZPERRS(:),ZPCORS(:), &
                               & ZBUFFG(:),ZP(:)
 INTEGER(KIND=JPIM), ALLOCATABLE :: IRECVCOUNTS(:)
-LOGICAL :: LLABORT, LL_OPENMP, LL_FIRST_ITER
+LOGICAL :: LLABORT, LL_OPENMP, LL_FIRST_ITER, LL_ABORT_PRECIS
 REAL(KIND=JPHOOK) :: ZHOOK_HANDLE
 
 INTEGER(KIND=JPIM), SAVE :: INMSG=0
@@ -1018,6 +1313,12 @@ IF (PRESENT(LD_OPENMP)) THEN
   LL_OPENMP = LD_OPENMP
 ELSE
   LL_OPENMP = .TRUE.
+ENDIF
+
+IF(JPRB==JPRD) THEN
+    LL_ABORT_PRECIS=.TRUE.
+ELSE
+    LL_ABORT_PRECIS=.FALSE.
 ENDIF
 
 IN = SIZE(P1)
@@ -1051,7 +1352,7 @@ ENDIF
 
 IF (REAL(2*ING,JPRB)*EPSILON(ZRES) >= 1.0) THEN
   CALL MPL_MESSAGE (CDMESSAGE='n is too large to guarantee error bounds', &
-                  & CDSTRING='ORDER_INDEP_DOT_PRODUCT',LDABORT=.TRUE.)
+                  & CDSTRING='ORDER_INDEP_DOT_PRODUCT',LDABORT=LL_ABORT_PRECIS)
 ENDIF
 
 ALLOCATE (ZP(MAX(IN,1_JPIM)))
@@ -1234,12 +1535,12 @@ IMPLICIT NONE
 REAL(KIND=JPRB), INTENT(IN) :: PRES
 REAL(KIND=JPRB) :: ROUND
 
-INTEGER(KIND=JPIM) :: II(2),IEQUIV(8),INTS_PER_REAL,J,I_LOW_WORD
-REAL(KIND=JPRB)    :: ZZ(2),ZUP,ZDOWN
+INTEGER(KIND=JPIM) :: II,IEQUIV(8),INTS_PER_REAL,J,I_LOW_WORD
+REAL(KIND=JPRB)    :: ZZ,ZUP,ZDOWN
 
 
-II(:)=1
-ZZ(:)=1.0_JPRB
+II=1
+ZZ=1.0_JPRB
 INTS_PER_REAL=STORAGE_SIZE(ZZ)/STORAGE_SIZE(II)
 
 IF (INTS_PER_REAL>SIZE(IEQUIV)) THEN
@@ -1284,5 +1585,79 @@ ENDIF
 ROUND = TRANSFER(IEQUIV(1:INTS_PER_REAL),PRES)
 
 END FUNCTION ROUND
+
+
+FUNCTION ROUND_DP (PRES)
+
+!-----------------------------------------------------------------
+!
+!  Returns the value of PRES rounded to the nearest floating-point
+!  number that has its last three bits zero
+
+!  The code to do this in Fortran is not nice, because Fortran
+!  does not proved access to the binary representation for REALs.
+!  Perhaps we should code it in c?
+
+!  This works on big-endian and little-endian machines.
+ 
+!  Author: Mike Fisher ECMWF 2006/02/08
+!
+!-----------------------------------------------------------------
+
+IMPLICIT NONE
+
+REAL(KIND=JPRD), INTENT(IN) :: PRES
+REAL(KIND=JPRD) :: ROUND_DP
+
+INTEGER(KIND=JPIM) :: II,IEQUIV(8),INTS_PER_REAL,J,I_LOW_WORD
+REAL(KIND=JPRD)    :: ZZ,ZUP,ZDOWN
+
+
+II=1
+ZZ=1.0_JPRD
+INTS_PER_REAL=STORAGE_SIZE(ZZ)/STORAGE_SIZE(II)
+
+IF (INTS_PER_REAL>SIZE(IEQUIV)) THEN
+  CALL MPL_MESSAGE (CDMESSAGE='INTS_PER_REAL>SIZE(IEQUIV)', &
+                    & CDSTRING='ORDER_INDEP_GLOBAL_SUM',LDABORT=.TRUE.)
+ENDIF
+
+!--- Test whether big-endian or little-endian
+
+ZUP = -1.0_JPRD
+IEQUIV(1:INTS_PER_REAL) = TRANSFER(ZUP,IEQUIV(1:INTS_PER_REAL))
+
+IF (IEQUIV(1)==0) THEN
+  I_LOW_WORD = 1                ! Little-endian
+ELSE
+  I_LOW_WORD = INTS_PER_REAL    ! Big-endian
+ENDIF
+
+!--- Find the nearest number with all 3 lowest-order bits zeroed
+
+IEQUIV(1:INTS_PER_REAL) = TRANSFER(PRES,IEQUIV(1:INTS_PER_REAL))
+ZUP    = PRES
+ZDOWN  = PRES
+
+IF (IBITS(IEQUIV(I_LOW_WORD),0,3)/=0) THEN
+  DO J=1,4
+    ZUP=NEAREST(ZUP,1.0_JPRD)
+    IEQUIV(1:INTS_PER_REAL) = TRANSFER(ZUP,IEQUIV(1:INTS_PER_REAL))
+    IF (IBITS(IEQUIV(I_LOW_WORD),0,3)==0) EXIT
+
+    ZDOWN=NEAREST(ZDOWN,-1.0_JPRD)
+    IEQUIV(1:INTS_PER_REAL) = TRANSFER(ZDOWN,IEQUIV(1:INTS_PER_REAL))
+    IF (IBITS(IEQUIV(I_LOW_WORD),0,3)==0) EXIT
+  ENDDO
+
+  IF (IBITS(IEQUIV(I_LOW_WORD),0,3)/=0) THEN
+    CALL MPL_MESSAGE (CDMESSAGE='THIS IS NOT POSSIBLE', &
+                    & CDSTRING='ORDER_INDEP_GLOBAL_SUM',LDABORT=.TRUE.)
+  ENDIF
+ENDIF
+
+ROUND_DP = TRANSFER(IEQUIV(1:INTS_PER_REAL),PRES)
+
+END FUNCTION ROUND_DP
 
 END MODULE ORDER_INDEPENDENT_SUMMATION_MOD

@@ -293,6 +293,7 @@ endfunction()
 # add tests
 
 add_ifs_test( test_fc )
+add_ifs_test( test_fc_massfixer )
 add_ifs_test( test_np2 )
 add_ifs_test( test_nt2 )
 add_ifs_test( test_sppt )
@@ -355,6 +356,7 @@ endif()
 
 if( ENABLE_TESTS )
   set_property(TEST ifs_t21_test_fc                      APPEND PROPERTY LABELS forecast serial)
+  set_property(TEST ifs_t21_test_fc_massfixer            APPEND PROPERTY LABELS forecast serial)
   set_property(TEST ifs_t21_test_np2                     APPEND PROPERTY LABELS forecast mpi)
   set_property(TEST ifs_t21_test_nt2                     APPEND PROPERTY LABELS forecast threading)
   set_property(TEST ifs_t21_test_sppt                    APPEND PROPERTY LABELS forecast mpi threading)
